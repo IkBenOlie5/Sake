@@ -1375,7 +1375,6 @@ def _get_sub_user_id(payload: ObjectT, /) -> int:
     return int(payload["user"]["id"])
 
 
-# TODO: add chunking
 class MemberCache(ResourceClient, traits.MemberCache):
     __slots__: typing.Sequence[str] = ()
 
@@ -1685,7 +1684,7 @@ class RoleCache(_Reference, traits.RoleCache):
         )
         await asyncio.gather(*setters, id_setter)
 
-    @as_listener(guild_events.GuildLeaveEvent)  # TODO: we're probably missing guild delete listeners in places
+    @as_listener(guild_events.GuildLeaveEvent)
     async def __on_guild_delete(self, event: guild_events.GuildLeaveEvent, /) -> None:
         await self.clear_roles_for_guild(event.guild_id)
 
