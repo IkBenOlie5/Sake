@@ -177,7 +177,7 @@ def _convert_expire_time(expire: ExpireT) -> typing.Optional[int]:
 
 @typing.runtime_checkable
 class _ListenerProto(typing.Protocol):
-    async def __call__(self, event: shard_events.ShardPayload, /) -> None:
+    async def __call__(self, event: shard_events.ShardPayloadEvent, /) -> None:
         raise NotImplementedError
 
     @property
@@ -185,7 +185,7 @@ class _ListenerProto(typing.Protocol):
         raise NotImplementedError
 
 
-CallbackT = typing.Callable[[ResourceT, shard_events.ShardPayload], typing.Coroutine[typing.Any, typing.Any, None]]
+CallbackT = typing.Callable[[ResourceT, shard_events.ShardPayloadEvent], typing.Coroutine[typing.Any, typing.Any, None]]
 
 
 def as_listener(event_name: str, /, *event_names: str) -> typing.Callable[[CallbackT[ResourceT]], CallbackT[ResourceT]]:
@@ -573,7 +573,7 @@ class ResourceClient(traits.Resource, abc.ABC):
         client = self.get_connection(resource_index)
         await client.mset({key_getter(payload): self.dump(payload) for payload in payloads})
 
-    async def _on_shard_payload_event(self, event: shard_events.ShardPayload, /) -> None:
+    async def _on_shard_payload_event(self, event: shard_events.ShardPayloadEvent, /) -> None:
         if listeners := self.__listeners.get(event.name.upper()):
             await asyncio.gather(*(listener(event) for listener in listeners))
 
@@ -602,7 +602,7 @@ class ResourceClient(traits.Resource, abc.ABC):
             raise
 
         if self.__event_manager:
-            self.__event_manager.event_manager.subscribe(shard_events.ShardPayload, self._on_shard_payload_event)
+            self.__event_manager.event_manager.subscribe(shard_events.ShardPayloadEvent, self._on_shard_payload_event)
 
         self.__started = True
 
@@ -618,7 +618,9 @@ class ResourceClient(traits.Resource, abc.ABC):
 
         if self.__event_manager:
             try:
-                self.__event_manager.event_manager.unsubscribe(shard_events.ShardPayload, self._on_shard_payload_event)
+                self.__event_manager.event_manager.unsubscribe(
+                    shard_events.ShardPayloadEvent, self._on_shard_payload_event
+                )
             except LookupError:
                 pass
 
@@ -706,11 +708,11 @@ class _MeCache(ResourceClient, traits.MeCache):
         return ()
 
     @as_listener("USER_UPDATE")
-    async def __on_own_user_update(self, event: shard_events.ShardPayload, /) -> None:
+    async def __on_own_user_update(self, event: shard_events.ShardPayloadEvent, /) -> None:
         await self.set_me(dict(event.payload))
 
     @as_listener("READY")
-    async def __on_shard_ready(self, event: shard_events.ShardPayload, /) -> None:
+    async def __on_shard_ready(self, event: shard_events.ShardPayloadEvent, /) -> None:
         await self.set_me(event.payload["user"])
 
     async def delete_me(self) -> None:
@@ -820,7 +822,7 @@ class EmojiCache(_Reference, traits.RefEmojiCache):
         await asyncio.gather(*setters, user_setter, reference_setter)
 
     @as_listener("GUILD_EMOJIS_UPDATE")
-    async def __on_emojis_update(self, event: shard_events.ShardPayload, /) -> None:
+    async def __on_emojis_update(self, event: shard_events.ShardPayloadEvent, /) -> None:
         guild_id = int(event.payload["guild_id"])
         await self.clear_emojis_for_guild(guild_id)
 
@@ -829,7 +831,7 @@ class EmojiCache(_Reference, traits.RefEmojiCache):
 
     #  TODO: can we also listen for member delete to manage this?
     @as_listener("GUILD_CREATE", "GUILD_UPDATE")
-    async def __on_guild_create_update(self, event: shard_events.ShardPayload, /) -> None:
+    async def __on_guild_create_update(self, event: shard_events.ShardPayloadEvent, /) -> None:
         guild_id = int(event.payload["id"])
         await self.clear_emojis_for_guild(guild_id)
 
@@ -837,7 +839,7 @@ class EmojiCache(_Reference, traits.RefEmojiCache):
             await self.__bulk_add_emojis(emojis, guild_id)
 
     @as_listener("GUILD_DELETE")
-    async def __on_guild_delete(self, event: shard_events.ShardPayload, /) -> None:
+    async def __on_guild_delete(self, event: shard_events.ShardPayloadEvent, /) -> None:
         if not event.payload.get("unavailable"):
             await self.clear_emojis_for_guild(int(event.payload["id"]))
 
@@ -921,11 +923,11 @@ class GuildCache(ResourceClient, traits.GuildCache):
         return (ResourceIndex.GUILD,)
 
     @as_listener("GUILD_CREATE", "GUILD_UPDATE")
-    async def __on_guild_create_update(self, event: shard_events.ShardPayload, /) -> None:
+    async def __on_guild_create_update(self, event: shard_events.ShardPayloadEvent, /) -> None:
         await self.set_guild(dict(event.payload))
 
     @as_listener("GUILD_DELETE")
-    async def __on_guild_delete(self, event: shard_events.ShardPayload, /) -> None:
+    async def __on_guild_delete(self, event: shard_events.ShardPayloadEvent, /) -> None:
         if not event.payload.get("unavailable"):
             await self.delete_guild(int(event.payload["id"]))
 
@@ -974,15 +976,15 @@ class GuildChannelCache(_Reference, traits.RefGuildChannelCache):
         return (ResourceIndex.CHANNEL,)
 
     @as_listener("CHANNEL_CREATE", "CHANNEL_UPDATE")
-    async def __on_channel_create_update(self, event: shard_events.ShardPayload, /) -> None:
+    async def __on_channel_create_update(self, event: shard_events.ShardPayloadEvent, /) -> None:
         await self.set_guild_channel(dict(event.payload))
 
     @as_listener("CHANNEL_DELETE")
-    async def __on_channel_delete(self, event: shard_events.ShardPayload, /) -> None:
+    async def __on_channel_delete(self, event: shard_events.ShardPayloadEvent, /) -> None:
         await self.delete_guild_channel(int(event.payload["id"]), guild_id=int(event.payload["guild_id"]))
 
     @as_listener("CHANNEL_PINS_UPDATE")
-    async def __on_channel_pins_update(self, event: shard_events.ShardPayload, /) -> None:
+    async def __on_channel_pins_update(self, event: shard_events.ShardPayloadEvent, /) -> None:
         try:
             payload = await self._get(ResourceIndex.CHANNEL, int(event.payload["channel_id"]))
         except errors.EntryNotFound:
@@ -992,7 +994,7 @@ class GuildChannelCache(_Reference, traits.RefGuildChannelCache):
             await self.set_guild_channel(payload)
 
     @as_listener("GUILD_CREATE")  # GUILD_UPDATE doesn't include channels
-    async def __on_guild_create_update(self, event: shard_events.ShardPayload, /) -> None:
+    async def __on_guild_create_update(self, event: shard_events.ShardPayloadEvent, /) -> None:
         guild_id = int(event.payload["id"])
         await self.clear_guild_channels_for_guild(guild_id)
 
@@ -1007,7 +1009,7 @@ class GuildChannelCache(_Reference, traits.RefGuildChannelCache):
         await asyncio.gather(*setters, id_setter)
 
     @as_listener("GUILD_DELETE")  # TODO: can we also use member remove events here?
-    async def __on_guild_delete(self, event: shard_events.ShardPayload, /) -> None:
+    async def __on_guild_delete(self, event: shard_events.ShardPayloadEvent, /) -> None:
         if not event.payload.get("unavailable"):
             await self.clear_guild_channels_for_guild(int(event.payload["id"]))
 
@@ -1091,15 +1093,15 @@ class IntegrationCache(_Reference, traits.IntegrationCache):
         return (ResourceIndex.INTEGRATION,)
 
     @as_listener("GUILD_DELETE")
-    async def __on_guild_delete_event(self, event: shard_events.ShardPayload, /) -> None:
+    async def __on_guild_delete_event(self, event: shard_events.ShardPayloadEvent, /) -> None:
         await self.clear_integrations_for_guild(int(event.payload["id"]))
 
     @as_listener("INTEGRATION_CREATE", "INTEGRATION_UPDATE")
-    async def __on_integration_event(self, event: shard_events.ShardPayload, /) -> None:
+    async def __on_integration_event(self, event: shard_events.ShardPayloadEvent, /) -> None:
         await self.set_integration(dict(event.payload), int(event.payload["guild_id"]))
 
     @as_listener("INTEGRATION_DELETE")
-    async def __on_integration_delete(self, event: shard_events.ShardPayload, /) -> None:
+    async def __on_integration_delete(self, event: shard_events.ShardPayloadEvent, /) -> None:
         await self.delete_integration(int(event.payload["id"]), guild_id=int(event.payload["guild_id"]))
 
     async def clear_integrations(self) -> None:
@@ -1176,11 +1178,11 @@ class InviteCache(ResourceClient, traits.InviteCache):
         return (ResourceIndex.INVITE,)
 
     @as_listener("INVITE_CREATE")
-    async def __on_invite_create(self, event: shard_events.ShardPayload, /) -> None:
+    async def __on_invite_create(self, event: shard_events.ShardPayloadEvent, /) -> None:
         await self.set_invite(dict(event.payload))
 
     @as_listener("INVITE_DELETE")
-    async def __on_invite_delete(self, event: shard_events.ShardPayload, /) -> None:
+    async def __on_invite_delete(self, event: shard_events.ShardPayloadEvent, /) -> None:
         await self.delete_invite(event.payload["code"])
 
     def with_invite_expire(self: ResourceT, expire: typing.Optional[ExpireT], /) -> ResourceT:
@@ -1319,22 +1321,22 @@ class MemberCache(ResourceClient, traits.MemberCache):
         await asyncio.gather(*setters, user_setter)
 
     @as_listener("GUILD_CREATE")  # members aren't included in GUILD_UPDATE
-    async def __on_guild_create(self, event: shard_events.ShardPayload, /) -> None:
+    async def __on_guild_create(self, event: shard_events.ShardPayloadEvent, /) -> None:
         guild_id = int(event.payload["id"])
         await self.clear_members_for_guild(guild_id)
         await self.__bulk_set_members(guild_id, event.payload["members"])
 
     @as_listener("GUILD_DELETE")
-    async def __on_guild_delete(self, event: shard_events.ShardPayload, /) -> None:
+    async def __on_guild_delete(self, event: shard_events.ShardPayloadEvent, /) -> None:
         if not event.payload.get("unavailable"):
             await self.clear_members_for_guild(int(event.payload["id"]))
 
     @as_listener("GUILD_MEMBER_ADD", "GUILD_MEMBER_UPDATE")
-    async def __on_guild_member_add_update(self, event: shard_events.ShardPayload, /) -> None:
+    async def __on_guild_member_add_update(self, event: shard_events.ShardPayloadEvent, /) -> None:
         await self.set_member(dict(event.payload), int(event.payload["guild_id"]))
 
     @as_listener("GUILD_MEMBER_REMOVE")
-    async def __on_member_event(self, event: shard_events.ShardPayload, /) -> None:
+    async def __on_member_event(self, event: shard_events.ShardPayloadEvent, /) -> None:
         try:
             own_id = self.metadata[_OwnIDStore.KEY]
             assert isinstance(own_id, _OwnIDStore)
@@ -1353,7 +1355,7 @@ class MemberCache(ResourceClient, traits.MemberCache):
             await self.delete_member(guild_id, user_id)
 
     @as_listener("GUILD_MEMBERS_CHUNK")
-    async def __on_guild_members_chunk_event(self, event: shard_events.ShardPayload, /) -> None:
+    async def __on_guild_members_chunk_event(self, event: shard_events.ShardPayloadEvent, /) -> None:
         await self.__bulk_set_members(int(event.payload["guild_id"]), event.payload["members"])
 
     async def clear_members(self) -> None:
@@ -1410,21 +1412,21 @@ class MessageCache(ResourceClient, traits.MessageCache):
         return (ResourceIndex.MESSAGE,)
 
     @as_listener("MESSAGE_CREATE")
-    async def on_message_create(self, event: shard_events.ShardPayload, /) -> None:
+    async def on_message_create(self, event: shard_events.ShardPayloadEvent, /) -> None:
         await self.set_message(dict(event.payload))
 
     @as_listener("MESSAGE_DELETE")
-    async def on_message_delete(self, event: shard_events.ShardPayload, /) -> None:
+    async def on_message_delete(self, event: shard_events.ShardPayloadEvent, /) -> None:
         await self.delete_message(event.payload["id"])
 
     @as_listener("MESSAGE_DELETE_BULK")
-    async def on_message_delete_bulk(self, event: shard_events.ShardPayload, /) -> None:
+    async def on_message_delete_bulk(self, event: shard_events.ShardPayloadEvent, /) -> None:
         client = self.get_connection(ResourceIndex.MESSAGE)
         message_ids = (int(mid) for mid in event.payload["ids"])
         await asyncio.gather(*itertools.starmap(client.delete, redis_iterators.chunk_values(message_ids)))
 
     @as_listener("MESSAGE_UPDATE")
-    async def on_message_update(self, event: shard_events.ShardPayload, /) -> None:
+    async def on_message_update(self, event: shard_events.ShardPayloadEvent, /) -> None:
         await self.update_message(dict(event.payload))
 
     def with_message_expire(self: ResourceT, expire: typing.Optional[ExpireT], /) -> ResourceT:
@@ -1512,21 +1514,21 @@ class PresenceCache(ResourceClient, traits.PresenceCache):
         await asyncio.gather(*setters)
 
     @as_listener("GUILD_CREATE")  # Presences is not included on GUILD_UPDATE
-    async def __on_guild_create(self, event: shard_events.ShardPayload, /) -> None:
+    async def __on_guild_create(self, event: shard_events.ShardPayloadEvent, /) -> None:
         await self.__bulk_add_presences(event.payload["presences"], int(event.payload["id"]))
 
     @as_listener("GUILD_DELETE")
-    async def __on_guild_delete(self, event: shard_events.ShardPayload, /) -> None:
+    async def __on_guild_delete(self, event: shard_events.ShardPayloadEvent, /) -> None:
         if not event.payload.get("unavailable"):
             await self.clear_presences_for_guild(int(event.payload["id"]))
 
     @as_listener("GUILD_MEMBERS_CHUNK")
-    async def __on_guild_members_chunk(self, event: shard_events.ShardPayload, /) -> None:
+    async def __on_guild_members_chunk(self, event: shard_events.ShardPayloadEvent, /) -> None:
         if presences := event.payload.get("presences"):
             await self.__bulk_add_presences(presences, int(event.payload["guild_id"]))
 
     @as_listener("PRESENCE_UPDATE")
-    async def __on_presence_update_event(self, event: shard_events.ShardPayload, /) -> None:
+    async def __on_presence_update_event(self, event: shard_events.ShardPayloadEvent, /) -> None:
         if event.payload["status"] == presences_.Status.OFFLINE:
             await self.delete_presence(int(event.payload["guild_id"]), int(event.payload["user"]["id"]))
             # TODO: handle presence.user?
@@ -1588,7 +1590,7 @@ class RoleCache(_Reference, traits.RoleCache):
         return (ResourceIndex.ROLE,)
 
     @as_listener("GUILD_CREATE", "GUILD_UPDATE")
-    async def __on_guild_create_update(self, event: shard_events.ShardPayload, /) -> None:
+    async def __on_guild_create_update(self, event: shard_events.ShardPayloadEvent, /) -> None:
         guild_id = int(event.payload["id"])
         await self.clear_roles_for_guild(guild_id)
         roles = event.payload["roles"]
@@ -1600,16 +1602,16 @@ class RoleCache(_Reference, traits.RoleCache):
         await asyncio.gather(*setters, id_setter)
 
     @as_listener("GUILD_DELETE")  # TODO: we're probably missing guild delete listeners in places
-    async def __on_guild_delete(self, event: shard_events.ShardPayload, /) -> None:
+    async def __on_guild_delete(self, event: shard_events.ShardPayloadEvent, /) -> None:
         if not event.payload.get("unavailable"):
             await self.clear_roles_for_guild(int(event.payload["id"]))
 
     @as_listener("GUILD_ROLE_CREATE", "GUILD_ROLE_UPDATE")
-    async def __on_guild_role_create_update(self, event: shard_events.ShardPayload, /) -> None:
+    async def __on_guild_role_create_update(self, event: shard_events.ShardPayloadEvent, /) -> None:
         await self.set_role(event.payload["role"], int(event.payload["guild_id"]))
 
     @as_listener("GUILD_ROLE_DELETE")
-    async def __on_guild_role_delete(self, event: shard_events.ShardPayload, /) -> None:
+    async def __on_guild_role_delete(self, event: shard_events.ShardPayloadEvent, /) -> None:
         await self.delete_role(int(event.payload["role_id"]), guild_id=int(event.payload["guild_id"]))
 
     async def clear_roles(self) -> None:
@@ -1698,7 +1700,7 @@ class VoiceStateCache(_Reference, traits.VoiceStateCache):
         return (ResourceIndex.VOICE_STATE,)
 
     @as_listener("CHANNEL_DELETE")
-    async def __on_channel_delete_event(self, event: shard_events.ShardPayload, /) -> None:
+    async def __on_channel_delete_event(self, event: shard_events.ShardPayloadEvent, /) -> None:
         channel_id = int(event.payload["id"])
         await self.clear_voice_states_for_channel(channel_id)
 
@@ -1724,7 +1726,7 @@ class VoiceStateCache(_Reference, traits.VoiceStateCache):
         return all_references
 
     @as_listener("GUILD_CREATE")  # voice states aren't included in GUILD_UPDATE
-    async def __on_guild_create(self, event: shard_events.ShardPayload, /) -> None:
+    async def __on_guild_create(self, event: shard_events.ShardPayloadEvent, /) -> None:
         guild_id = int(event.payload["id"])
         await self.clear_voice_states_for_guild(guild_id)
 
@@ -1745,12 +1747,12 @@ class VoiceStateCache(_Reference, traits.VoiceStateCache):
         await asyncio.gather(*setters, *reference_setters)
 
     @as_listener("GUILD_DELETE")
-    async def __on_guild_delete(self, event: shard_events.ShardPayload, /) -> None:
+    async def __on_guild_delete(self, event: shard_events.ShardPayloadEvent, /) -> None:
         guild_id = int(event.payload["id"])
         await self.clear_voice_states_for_guild(guild_id)
 
     @as_listener("VOICE_STATE_UPDATE")
-    async def __on_voice_state_update(self, event: shard_events.ShardPayload, /) -> None:
+    async def __on_voice_state_update(self, event: shard_events.ShardPayloadEvent, /) -> None:
         guild_id = int(event.payload["guild_id"])
         if event.payload.get("channel_id") is None:
             await self.delete_voice_state(guild_id, int(event.payload["user_id"]))
